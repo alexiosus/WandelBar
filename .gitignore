@@ -1,0 +1,20 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+.worktrees/
+.superpowers/
+/DESIGN-IS-*/
+/docs/superpowers/
+
+# App bundle output
+Build/
+
+# Editors
+.vscode/
+.idea/
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store

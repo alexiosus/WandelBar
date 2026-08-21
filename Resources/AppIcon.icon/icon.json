@@ -1,0 +1,25 @@
+{
+  "fill" : {
+    "automatic-gradient" : "srgb:0.10000,0.10000,0.12000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "Background.png",
+          "name" : "WandelBar Artwork",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [ 0, 0 ]
+          }
+        }
+      ]
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [ "watchOS" ],
+    "squares" : "shared"
+  }
+}
