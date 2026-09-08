@@ -18,3 +18,7 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# Python automation caches
+__pycache__/
+*.pyc
