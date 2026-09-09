@@ -91,3 +91,25 @@ swift Scripts/catalog_sign.swift verify \
 rejects expired payloads. `inspect --url` on the Python tool validates an attachment
 without approving, retaining, signing or publishing it. App releases should bundle
 a current verified copy of the signed index in `Resources/Community/catalog.json`.
+
+## Generated previews
+
+Approvals now render a PNG from the validated package using the same native renderer
+as Share to Discussions and the bundled sample photograph. Up to six presets are
+shown together; packages with more presets show the first six. Cards can be enlarged.
+The validation/rendering job has no signing secret. A separate upload job publishes
+only hash-verified PNGs under `Community/previews/<sha256>.png`; the signing job then
+authenticates URL, SHA-256, byte count and dimensions in the optional `preview` field.
+Packages still stay in Discussions. Existing clients can ignore optional artwork.
+
+Opening the gallery loads visible previews (at most two concurrent downloads). Each
+PNG is checked against signed metadata before decoding, and cached files are checked
+again on every use. The image cache is capped at 32 MiB; revoked images are removed
+from it. Preview failure never blocks package import. Images are at most 8 MiB,
+2160 by 4096 pixels and 9 million pixels total. Large contact sheets are downsampled
+to stay within the byte limit.
+
+Manual/daily runs generate missing artwork for up to ten already-approved packages
+per run, verifying their original signed hashes first. Renewal never approves changed
+package bytes. Orphaned remote PNGs can remain after revocation but are no longer
+referenced by the signed catalogue.

@@ -275,6 +275,108 @@ def approval_request(event, event_name):
     return {'number': post['number'], 'bodyHash': digest(post['body'].encode()), 'packageURL': attachment_from_body(post['body'])}
 
 
+MAX_PREVIEW = 8 * 1024 * 1024
+PREVIEW_ROOT = 'https://raw.githubusercontent.com/alexiosus/WandelBar/master/Community/previews/'
+
+
+def preview_metadata(value):
+    require(isinstance(value, dict) and isinstance(value.get('sha256'), str) and DIGEST.fullmatch(value['sha256']), 'Invalid preview hash')
+    require(value.get('url') == PREVIEW_ROOT + value['sha256'] + '.png', 'Invalid preview URL')
+    require(type(value.get('byteCount')) is int and 0 < value['byteCount'] <= MAX_PREVIEW and
+            type(value.get('width')) is int and 0 < value['width'] <= 2160 and
+            type(value.get('height')) is int and 0 < value['height'] <= 4096 and
+            value['width'] * value['height'] <= 9_000_000, 'Invalid preview dimensions or size')
+    return {key: value[key] for key in ('url', 'sha256', 'byteCount', 'width', 'height')}
+
+
+def render_preview(data, url, artifact_directory):
+    # Called only after archive validation, without a signing secret.
+    inner = archive_files(data, wrapper=True)['Presets.wandelbar-presets'] if url.endswith('.zip') else data
+    files = archive_files(inner)
+    with tempfile.TemporaryDirectory(prefix='wandelbar-render-') as folder:
+        root = Path(folder)
+        inputs = root / 'input'
+        inputs.mkdir(mode=0o700)
+        for name, content in files.items():
+            if name.endswith('/'):
+                continue
+            target = inputs / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        output = root / 'preview.png'
+        subprocess.run([str(Path('Build/CommunityPreviewRenderer').resolve()), str(inputs),
+                        str(Path('Sources/WandelBar/Resources').resolve()), str(output)],
+                       check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with output.open('rb') as stream:
+            png = stream.read(MAX_PREVIEW + 1)
+        require(0 < len(png) <= MAX_PREVIEW, 'Generated preview exceeds 8 MiB')
+        validate_png(png)
+        width, height = struct.unpack('>II', png[16:24])
+        sha = digest(png)
+        metadata = preview_metadata({'url': PREVIEW_ROOT + sha + '.png', 'sha256': sha,
+                                     'byteCount': len(png), 'width': width, 'height': height})
+        directory = Path(artifact_directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / (sha + '.png')).write_bytes(png)
+        return metadata
+
+
+def signed_baseline():
+    current = gh(f'repos/{REPO}/contents/Community/catalog.json?ref=master')
+    envelope = base64.b64decode(current['content'], validate=False)
+    require(len(envelope) <= 1_048_576, 'Oversized existing catalogue')
+    with tempfile.TemporaryDirectory(prefix='wandelbar-index-') as folder:
+        path = Path(folder) / 'catalog.json'
+        path.write_bytes(envelope)
+        swift_tool('verify', '--allow-expired', '--config', 'Sources/WandelBar/Resources/Community/configuration.json', '--input', str(path))
+    return decode_json(base64.b64decode(decode_json(envelope)['payload'], validate=True))
+
+
+def prepare_previews(evidence, event_name, artifact_directory):
+    previews = {}
+    approval = evidence.get('approval')
+    if approval:
+        data = download(approval['packageURL'])
+        require(digest(data) == approval['sha256'] and len(data) == approval['byteCount'], 'Package changed before preview generation')
+        validate_package(data, approval['packageURL'])
+        previews[approval['sha256']] = render_preview(data, approval['packageURL'], artifact_directory)
+    elif event_name in ('workflow_dispatch', 'schedule'):
+        # Backfill only already-signed packages, retaining exact approved bytes.
+        baseline = signed_baseline()
+        approved = {a['sha256']: a for a in baseline.get('approvals', [])}
+        for entry in [e for e in baseline['entries'] if not e.get('preview')][:10]:
+            record = approved.get(entry['sha256'])
+            if not record or not is_current(discussion(record['number']), record['bodyHash']):
+                continue
+            data = download(entry['packageURL'])
+            require(digest(data) == entry['sha256'] and len(data) == entry['byteCount'], 'Approved package changed')
+            validate_package(data, entry['packageURL'])
+            previews[entry['sha256']] = render_preview(data, entry['packageURL'], artifact_directory)
+    evidence['previews'] = previews
+    return evidence
+
+
+def upload_previews(evidence, directory):
+    previews = evidence.get('previews', {})
+    require(isinstance(previews, dict) and len(previews) <= 10, 'Too many preview files')
+    for package_hash, value in previews.items():
+        require(DIGEST.fullmatch(package_hash), 'Invalid package hash')
+        metadata = preview_metadata(value)
+        path = Path(directory) / (metadata['sha256'] + '.png')
+        require(path.is_file() and not path.is_symlink() and path.stat().st_size == metadata['byteCount'], 'Missing preview artifact')
+        data = path.read_bytes()
+        require(digest(data) == metadata['sha256'], 'Preview artifact hash mismatch')
+        # Upload only a hash-named PNG path. This job has no signing key and does not
+        # execute artifacts or decode images. An existing immutable PNG is reused.
+        endpoint = f'repos/{REPO}/contents/Community/previews/{metadata["sha256"]}.png'
+        existing = subprocess.run(['gh', 'api', endpoint + '?ref=master'], capture_output=True, text=True)
+        if existing.returncode == 0:
+            stored = decode_json(existing.stdout)
+            require(stored.get('size') == len(data) and stored.get('sha') == hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest(), 'Existing preview conflicts with immutable content')
+            continue
+        gh(endpoint, {'message': 'Add generated community preview', 'content': base64.b64encode(data).decode(), 'branch': 'master'}, 'PUT')
+
+
 def validate_event(event, event_name):
     request = approval_request(event, event_name)
     if request is None:
@@ -334,6 +436,12 @@ def build_payload(baseline, evidence, event, event_name, lookup, now, event_orde
         retained = [a for a in retained if a['sha256'] != verified['sha256']]
         entries[verified['sha256']] = entry
         retained.append({**request, 'sha256': verified['sha256'], 'approvedBy': APPROVER_ID})
+    previews = evidence.get('previews', {})
+    require(isinstance(previews, dict) and len(previews) <= 10, 'Too many previews')
+    for approval in retained:
+        sha = approval['sha256']
+        if sha in previews:
+            entries[sha] = {**entries[sha], 'preview': preview_metadata(previews[sha])}
     retained.sort(key=lambda a: a['number'])
     result = {**baseline, 'schemaVersion': 1, 'minimumClientVersion': 2, 'sequence': baseline['sequence'] + 1,
               'issuedAt': now, 'expiresAt': now + 7 * 86400, 'approvals': retained, 'eventWatermarks': watermarks,
@@ -391,7 +499,7 @@ def publish(evidence, event, event_name):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['validate', 'publish', 'inspect'])
+    parser.add_argument('command', choices=['validate', 'publish', 'inspect', 'upload-previews'])
     parser.add_argument('--event', default=os.environ.get('GITHUB_EVENT_PATH'))
     parser.add_argument('--event-name', default=os.environ.get('GITHUB_EVENT_NAME', 'workflow_dispatch'))
     parser.add_argument('--evidence', default='validation.json')
@@ -404,10 +512,13 @@ def main():
         return
     event = bounded_json(args.event, 1_048_576) if args.event else {}
     if args.command == 'validate':
-        Path(args.evidence).write_text(json.dumps(validate_event(event, args.event_name)), encoding='utf-8')
+        evidence = prepare_previews(validate_event(event, args.event_name), args.event_name, Path(args.evidence).parent / 'previews')
+        Path(args.evidence).write_text(json.dumps(evidence), encoding='utf-8')
         print('Validation finished. No package bytes retained.')
+    elif args.command == 'upload-previews':
+        upload_previews(bounded_json(args.evidence, 32768), Path(args.evidence).parent / 'previews')
     else:
-        publish(bounded_json(args.evidence, 4096), event, args.event_name)
+        publish(bounded_json(args.evidence, 32768), event, args.event_name)
 
 
 if __name__ == '__main__':

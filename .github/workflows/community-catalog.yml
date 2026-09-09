@@ -23,6 +23,8 @@ jobs:
           persist-credentials: false
       - name: Test catalogue automation
         run: python3 -m unittest discover -s Tests/CommunityAutomation -v
+      - name: Build shared native preview renderer
+        run: Scripts/build_community_preview_renderer.sh
       - name: Validate approval and package (no signing secret)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -30,12 +32,33 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: catalogue-validation
-          path: validation.json
+          path: |
+            validation.json
+            previews/*.png
           retention-days: 1
           if-no-files-found: error
 
-  publish:
+  upload-previews:
     needs: validate
+    runs-on: macos-26
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: catalogue-validation
+          path: validation
+      - name: Publish hash-verified PNG files (no signing secret)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/community_catalog.py upload-previews --evidence validation/validation.json
+
+  publish:
+    needs: upload-previews
     runs-on: macos-26
     timeout-minutes: 15
     environment: community-catalog
