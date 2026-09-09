@@ -57,6 +57,14 @@ func validPayload(_ data: Data, allowExpired: Bool = false) throws {
             guard let text = entry[name] as? String, validText(text, limit: limit) else { throw ToolError("Invalid \(name)") }
         }
         guard tags.allSatisfy({ validText($0, limit: 30) }) else { throw ToolError("Invalid tag") }
+        if let preview = entry["preview"] {
+            guard let p = preview as? [String: Any], let sha = p["sha256"] as? String,
+                  sha.count == 64, sha.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+                  p["url"] as? String == "https://raw.githubusercontent.com/alexiosus/WandelBar/master/Community/previews/\(sha).png",
+                  let bytes = p["byteCount"] as? Int, (1...(8 * 1_048_576)).contains(bytes),
+                  let width = p["width"] as? Int, (1...2160).contains(width),
+                  let height = p["height"] as? Int, (1...4096).contains(height), width * height <= 9_000_000 else { throw ToolError("Invalid signed preview metadata") }
+        }
     }
 }
 func validPackageURL(_ value: String, digest: String) -> Bool {

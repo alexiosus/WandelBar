@@ -174,3 +174,35 @@ class ReviewRegressionTests(unittest.TestCase):
         bad['presets'][0]['texture'] = {'id': 'nonexistent', 'kind': 'builtIn'}
         with self.assertRaises(ValueError):
             c.validate_package(zipped([('manifest.json', json.dumps(bad))]), URL.replace('.zip', '.wandelbar-presets'))
+
+class PreviewTests(unittest.TestCase):
+    def metadata(self):
+        sha = 'c' * 64
+        return {'url': c.PREVIEW_ROOT + sha + '.png', 'sha256': sha, 'byteCount': 100, 'width': 2160, 'height': 696}
+
+    def test_preview_metadata_is_bounded_and_pinned(self):
+        value = self.metadata()
+        self.assertEqual(c.preview_metadata(value), value)
+        for key, bad in [('url', 'https://evil.test/x.png'), ('byteCount', c.MAX_PREVIEW + 1), ('width', 2161), ('height', 4097), ('sha256', '../x')]:
+            changed = {**value, key: bad}
+            with self.assertRaises(ValueError): c.preview_metadata(changed)
+
+    def test_backfill_keeps_package_approval_and_revocation_drops_preview(self):
+        first = c.build_payload(baseline(), evidence(), event(), 'discussion', lambda _: post(), 10, event_order=10)
+        supplied = {'approval': None, 'previews': {'a' * 64: self.metadata()}}
+        result = c.build_payload(first, supplied, {}, 'workflow_dispatch', lambda _: post(), 20, event_order=11)
+        self.assertEqual(result['entries'][0]['preview'], self.metadata())
+        self.assertEqual(result['entries'][0]['sha256'], first['entries'][0]['sha256'])
+        self.assertEqual(result['approvals'], first['approvals'])
+        revoked = c.build_payload(first, supplied, {}, 'schedule', lambda _: None, 30, event_order=12)
+        self.assertEqual(revoked['entries'], [])
+
+    def test_mismatched_preview_artifact_never_uploads(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / ('c' * 64 + '.png')
+            path.write_bytes(b'x' * 100)
+            with patch.object(c, 'gh') as api:
+                with self.assertRaises(ValueError):
+                    c.upload_previews({'previews': {'a' * 64: self.metadata()}}, folder)
+                api.assert_not_called()

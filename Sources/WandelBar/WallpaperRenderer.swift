@@ -68,24 +68,27 @@ struct WallpaperRenderer {
         desktopOptions: DesktopRenderOptions,
         settings: WallpaperEffectSettings,
         textureURL: URL? = nil,
-        size: CGSize
+        size: CGSize,
+        backingScaleFactor: CGFloat = 1,
+        menuBarHeightPoints: CGFloat? = nil
     ) throws -> CGImage {
         let width = max(1, Int(size.width.rounded()))
         let height = max(1, Int(size.height.rounded()))
+        let renderScale = min(3, max(1, backingScaleFactor))
         let displaySize = display.pixelSize
         let fullHeight = max(
             height,
             Int((CGFloat(width) * displaySize.height / max(1, displaySize.width)).rounded())
         )
         let previewFrame = CGRect(x: 0, y: 0, width: width, height: fullHeight)
-        let menuBarHeight = min(CGFloat(fullHeight), max(24, display.menuBarHeightPoints))
+        let menuBarHeight = min(CGFloat(fullHeight), max(24, menuBarHeightPoints ?? display.menuBarHeightPoints))
         let previewDisplay = DisplaySnapshot(
             id: "\(display.id)-preset-preview",
             localizedName: display.localizedName,
             frame: previewFrame,
             visibleFrame: previewFrame.insetBy(dx: 0, dy: menuBarHeight / 2)
                 .offsetBy(dx: 0, dy: -menuBarHeight / 2),
-            backingScaleFactor: 1,
+            backingScaleFactor: renderScale,
             statusBarThickness: menuBarHeight
         )
         let baseImage = try makeScreenSizedImage(
@@ -101,9 +104,9 @@ struct WallpaperRenderer {
         )
         let cropRect = CGRect(
             x: 0,
-            y: max(0, fullHeight - height),
-            width: width,
-            height: height
+            y: CGFloat(max(0, fullHeight - height)) * renderScale,
+            width: CGFloat(width) * renderScale,
+            height: CGFloat(height) * renderScale
         )
         guard let preview = Self.ciContext.createCGImage(CIImage(cgImage: effected), from: cropRect) else {
             throw WallpaperRendererError.cannotRenderBlur
@@ -118,10 +121,12 @@ struct WallpaperRenderer {
         settings: WallpaperEffectSettings,
         textureURL: URL? = nil,
         menuBarHeightPoints: CGFloat = 24,
-        size: CGSize
+        size: CGSize,
+        backingScaleFactor: CGFloat = 1
     ) throws -> CGImage {
         let width = max(1, Int(size.width.rounded()))
         let height = max(1, Int(size.height.rounded()))
+        let renderScale = min(3, max(1, backingScaleFactor))
         let fullHeight = height
         let frame = CGRect(x: 0, y: 0, width: width, height: fullHeight)
         let menuBarHeight = min(CGFloat(fullHeight), max(24, menuBarHeightPoints))
@@ -131,10 +136,10 @@ struct WallpaperRenderer {
             frame: frame,
             visibleFrame: frame.insetBy(dx: 0, dy: menuBarHeight / 2)
                 .offsetBy(dx: 0, dy: -menuBarHeight / 2),
-            backingScaleFactor: 1,
+            backingScaleFactor: renderScale,
             statusBarThickness: menuBarHeight
         )
-        guard let sourceURL = PresetSampleBackground.url else {
+        guard let sourceURL = PresetSampleBackground.renderURL else {
             throw WallpaperRendererError.cannotCreateBitmap
         }
         let baseImage = try makeScreenSizedImage(
@@ -154,9 +159,9 @@ struct WallpaperRenderer {
         )
         let cropRect = CGRect(
             x: 0,
-            y: max(0, fullHeight - height),
-            width: width,
-            height: height
+            y: 0,
+            width: CGFloat(width) * renderScale,
+            height: CGFloat(height) * renderScale
         )
         guard let preview = Self.ciContext.createCGImage(CIImage(cgImage: effected), from: cropRect) else {
             throw WallpaperRendererError.cannotRenderBlur

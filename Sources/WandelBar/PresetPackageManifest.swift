@@ -14,6 +14,9 @@ struct PresetPackageLimits: Equatable, Sendable {
     let maximumCompressedBytes: Int64
     let maximumExtractedBytes: Int64
 
+    var maximumManifestBytes: Int64 { min(maximumExtractedBytes, 1024 * 1024) }
+    var maximumStringBytes: Int { 1024 }
+
     static let `default` = PresetPackageLimits(
         maximumPresets: 100,
         maximumTextures: 100,

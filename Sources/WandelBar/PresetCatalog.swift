@@ -1,6 +1,15 @@
 import AppKit
 
 enum PresetSampleBackground {
+    /// The full photograph is used for rendering; `image` remains a lightweight strip
+    /// for the catalogue's synchronous placeholder.
+    static var renderURL: URL? {
+        if let source = Bundle.main.url(forResource: "PresetSampleSource", withExtension: "png", subdirectory: "Preview") { return source }
+        if Bundle.main.bundleURL.pathExtension != "app",
+           let source = Bundle.module.url(forResource: "PresetSampleSource", withExtension: "png", subdirectory: "Preview") { return source }
+        return url
+    }
+
     static let url = Bundle.main.url(
         forResource: "PresetSampleBackground",
         withExtension: "png",
@@ -68,32 +77,6 @@ struct PresetControlRowLayout: Sendable {
             width: selectorWidth,
             height: 30
         )
-    }
-}
-
-struct PresetPreviewContext: Sendable {
-    let sourceURL: URL
-    let display: DisplaySnapshot
-    let storedDesktop: StoredDesktop
-    let sourceIdentity: String
-
-    var cacheKey: String {
-        let pixelSize = display.pixelSize
-        let sourceSignature = FileCacheKey.sourceSignature(
-            for: sourceURL,
-            pixelSize: pixelSize
-        )
-        let components: [String] = [
-            sourceIdentity,
-            sourceSignature,
-            display.id,
-            String(Double(pixelSize.width)),
-            String(Double(pixelSize.height)),
-            String(storedDesktop.imageScaling ?? -1),
-            String(storedDesktop.allowClipping ?? true),
-            storedDesktop.fillColorData?.base64EncodedString() ?? "default-fill"
-        ]
-        return FileCacheKey.digest(components)
     }
 }
 
