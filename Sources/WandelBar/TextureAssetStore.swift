@@ -164,9 +164,38 @@ final class TextureAssetStore {
         return asset
     }
 
+    /// Re-check references immediately before deletion; built-ins are never removed.
+    func removeUnusedTexture(id: String, referencedIDs: Set<String>) throws {
+        guard !referencedIDs.contains(id),
+              let asset = storedCustomAssets.first(where: { $0.id == id }),
+              let name = asset.fileName,
+              name == URL(fileURLWithPath: name).lastPathComponent else { throw StoreError.cannotWrite }
+        let remaining = storedCustomAssets.filter { $0.id != id }
+        let metadata = try JSONEncoder().encode(remaining)
+        let previousMetadata = defaults.data(forKey: storageKey)
+        guard persistMetadata(metadata) else { throw StoreError.cannotWrite }
+        do {
+            let url = texturesDirectory.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        } catch {
+            restoreMetadata(previousMetadata)
+            throw StoreError.cannotWrite
+        }
+        storedCustomAssets = remaining
+    }
+
     func installPackageTextures(
         _ payloads: [PackageTexturePayload]
     ) throws -> TexturePackageInstallation {
+        try installPackageTextures(payloads, validatePNG: true)
+    }
+
+    /// Used only for immutable payloads already decoded and hashed by a live import session.
+    func installValidatedPackageTextures(_ payloads: [PackageTexturePayload]) throws -> TexturePackageInstallation {
+        try installPackageTextures(payloads, validatePNG: false)
+    }
+
+    private func installPackageTextures(_ payloads: [PackageTexturePayload], validatePNG: Bool) throws -> TexturePackageInstallation {
         let previousAssets = storedCustomAssets
         let previousMetadata = defaults.data(forKey: storageKey)
         var sourceToLocalID: [String: String] = [:]
@@ -177,8 +206,10 @@ final class TextureAssetStore {
                   Self.sha256(payload.pngData) == payload.sha256 else {
                 throw StoreError.cannotDecode
             }
-            let normalized = try Self.normalizeTextureData(payload.pngData)
-            guard normalized == payload.pngData else { throw StoreError.cannotEncode }
+            if validatePNG {
+                let normalized = try Self.normalizeTextureData(payload.pngData)
+                guard normalized == payload.pngData else { throw StoreError.cannotEncode }
+            }
 
             let id = "custom.\(payload.sha256)"
             sourceToLocalID[payload.sourceID] = id
@@ -384,5 +415,46 @@ final class TextureAssetStore {
     nonisolated private static func isLowercaseDigest(_ value: String) -> Bool {
         let lowercaseHex = Set("0123456789abcdef")
         return value.count == 64 && value.allSatisfy(lowercaseHex.contains)
+    }
+}
+
+extension TextureAssetStore {
+    /// Called only for payloads validated by the live import session. Hashing and all large I/O are detached.
+    func stageValidatedPackageTextures(_ payloads: [PackageTexturePayload]) async throws -> TexturePackageStage {
+        let directory = texturesDirectory, assets = storedCustomAssets, metadata = defaults.data(forKey: storageKey)
+        let work = Task.detached(priority: .userInitiated) {
+            try TexturePackageStage.prepare(payloads: payloads, directory: directory, previousAssets: assets, previousMetadata: metadata)
+        }
+        return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+    }
+
+    /// A brief, non-suspending transaction: only filesystem moves and metadata publication remain.
+    func installStagedPackageTextures(_ stage: TexturePackageStage) throws -> TexturePackageInstallation {
+        guard storedCustomAssets == stage.previousAssets,
+              defaults.data(forKey: storageKey) == stage.previousMetadata else { throw StoreError.cannotWrite }
+        for (name, identity) in stage.existingFiles {
+            guard try TextureFileIdentity(texturesDirectory.appendingPathComponent(name)) == identity else { throw StoreError.cannotWrite }
+        }
+        let manager = FileManager.default
+        for name in stage.stagedNames {
+            guard !manager.fileExists(atPath: texturesDirectory.appendingPathComponent(name).path) else { throw StoreError.cannotWrite }
+        }
+        let updated = storedCustomAssets + stage.additions
+        let metadata = try JSONEncoder().encode(updated)
+        var moved: [String] = []
+        do {
+            for name in stage.stagedNames {
+                try manager.moveItem(at: stage.directory.appendingPathComponent(name), to: texturesDirectory.appendingPathComponent(name))
+                moved.append(name)
+            }
+            guard persistMetadata(metadata) else { throw StoreError.cannotWrite }
+            storedCustomAssets = updated
+        } catch {
+            for name in moved { try? manager.removeItem(at: texturesDirectory.appendingPathComponent(name)) }
+            restoreMetadata(stage.previousMetadata)
+            throw StoreError.cannotWrite
+        }
+        return TexturePackageInstallation(sourceToLocalID: stage.mapping, newTextureCount: stage.additions.count,
+            previousAssets: stage.previousAssets, previousMetadata: stage.previousMetadata, createdFileNames: moved)
     }
 }

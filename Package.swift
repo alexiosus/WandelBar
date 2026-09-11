@@ -10,18 +10,25 @@ let package = Package(
     products: [
         .executable(name: "WandelBar", targets: ["WandelBar"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")
+    ],
     targets: [
+        .systemLibrary(name: "CArchive"),
         .executableTarget(
             name: "WandelBar",
+            dependencies: ["CArchive", .product(name: "Sparkle", package: "Sparkle")],
             resources: [
                 .copy("Resources/Preview"),
-                .copy("Resources/Textures")
+                .copy("Resources/Textures"),
+                .copy("Resources/Community")
             ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreImage"),
                 .linkedFramework("Photos"),
-                .linkedFramework("QuickLookThumbnailing")
+                .linkedFramework("QuickLookThumbnailing"),
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
             ]
         ),
         .testTarget(

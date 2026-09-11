@@ -25,4 +25,3 @@ struct PresetPreviewContext: Sendable {
         return FileCacheKey.digest(components)
     }
 }
-

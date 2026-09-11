@@ -67,6 +67,11 @@ final class WallpaperController: NSObject {
         super.init()
     }
 
+    var referencedTextureIDs: Set<String> { settingsStore.referencedTextureIDs }
+    var hasCurrentSpaceSettingsOverride: Bool {
+        editingSpaceUUID.flatMap { settingsStore.override(for: $0) } != nil
+    }
+
     var isEnabled: Bool {
         defaults.bool(forKey: DefaultsKey.enabled)
     }
@@ -617,7 +622,7 @@ final class WallpaperController: NSObject {
         for result in outcome.results {
             guard let screen = screen(forDisplayID: result.display.id) else {
                 // The display disappeared while rendering; a later pass will retry.
-                try? fileManager.removeItem(at: result.outputURL)
+                removeGeneratedFile(atPath: result.outputURL.path)
                 skippedStaleResult = true
                 continue
             }
@@ -634,7 +639,7 @@ final class WallpaperController: NSObject {
                       workspaceURL: currentWorkspaceURL,
                       generatedDirectory: generatedDirectory
                   ) else {
-                try? fileManager.removeItem(at: result.outputURL)
+                removeGeneratedFile(atPath: result.outputURL.path)
                 skippedStaleResult = true
                 continue
             }
@@ -663,7 +668,7 @@ final class WallpaperController: NSObject {
                     in: &saved
                 )
             } catch {
-                try? fileManager.removeItem(at: result.outputURL)
+                removeGeneratedFile(atPath: result.outputURL.path)
                 failures.append("\(screen.localizedName): \(error.localizedDescription)")
             }
         }
@@ -1224,6 +1229,7 @@ final class WallpaperController: NSObject {
             return
         }
         try? fileManager.removeItem(at: url)
+        WallpaperAgentCachePruner.schedule(retired: [url], generatedDirectory: generatedDirectory)
     }
 
     /// Removes generated files that are no longer referenced by any stored desktop or
@@ -1251,9 +1257,11 @@ final class WallpaperController: NSObject {
             return
         }
 
-        for file in files where !keep.contains(file.standardizedFileURL.path) {
+        let retired = files.filter { !keep.contains($0.standardizedFileURL.path) }
+        for file in retired {
             try? fileManager.removeItem(at: file)
         }
+        WallpaperAgentCachePruner.schedule(retired: retired, generatedDirectory: generatedDirectory)
     }
 
     /// Removes unreferenced QuickLook/Photos source copies that have not been touched recently.
@@ -1316,7 +1324,7 @@ final class WallpaperController: NSObject {
 
     private func discardGeneratedFiles(in outcome: GenerationOutcome) {
         for result in outcome.results {
-            try? fileManager.removeItem(at: result.outputURL)
+            removeGeneratedFile(atPath: result.outputURL.path)
         }
     }
 

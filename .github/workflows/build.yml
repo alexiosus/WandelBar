@@ -15,13 +15,17 @@ jobs:
     # targets macOS 14 through Package.swift and Info.plist.
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Show Swift version
         run: swift --version
 
       - name: Test
         run: swift test
+      - name: Verify release automation
+        run: python3 -m unittest discover -s Tests/ReleaseAutomation -v
+      - name: Verify community automation
+        run: python3 -m unittest discover -s Tests/CommunityAutomation -v
 
       - name: Build and package app bundle
         run: ./Scripts/package_app.sh

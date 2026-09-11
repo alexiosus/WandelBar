@@ -34,7 +34,7 @@ test -n "$DEVICE"
 test -n "$MOUNT_PATH"
 
 test -d "$MOUNT_PATH/WandelBar.app"
-test -L "$MOUNT_PATH/Applications"
+swift "$ROOT_DIR/Scripts/dmg_applications_alias.swift" --verify "$MOUNT_PATH/Applications"
 test -f "$MOUNT_PATH/.background/dmg-background.jpeg"
 test -f "$MOUNT_PATH/.DS_Store"
 test -f "$MOUNT_PATH/WandelBar.app/Contents/Resources/LICENSE.txt"

@@ -43,7 +43,7 @@ trap cleanup EXIT
 
 mkdir -p "$STAGING_DIR/.background" "$(dirname "$OUTPUT_PATH")"
 ditto "$APP_PATH" "$STAGING_DIR/WandelBar.app"
-ln -s /Applications "$STAGING_DIR/Applications"
+swift "$ROOT_DIR/Scripts/dmg_applications_alias.swift" "$STAGING_DIR/Applications"
 sips \
     --resampleHeightWidth 760 1200 \
     --setProperty dpiWidth 144 \

@@ -183,10 +183,10 @@ import Testing
             unsupportedReason: "video wallpapers are not supported"
         )
     )
-    #expect(
-        !WallpaperRestorePolicy.shouldAbandonStoredOriginal(
-            currentIsGenerated: false,
-            unsupportedReason: nil
-        )
-    )
+}
+
+@Test func turningOffPreservesANewOrdinaryWallpaper() {
+    #expect(WallpaperRestorePolicy.shouldAbandonStoredOriginal(
+        currentIsGenerated: false, unsupportedReason: nil
+    ))
 }

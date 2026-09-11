@@ -165,6 +165,10 @@ final class WallpaperEffectSettingsStore {
         }
     }
 
+    var referencedTextureIDs: Set<String> {
+        Set(([global] + Array(overrides.values)).compactMap(\.textureID))
+    }
+
     private var overrides: [String: WallpaperEffectSettings] {
         get {
             guard let data = defaults.data(forKey: perSpaceSettingsKey) else {

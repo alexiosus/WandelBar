@@ -12,6 +12,9 @@ protocol WallpaperEffectControlling: AnyObject {
     var isCurrentSpaceEffectEnabled: Bool { get }
     var dontApplyOnLockScreen: Bool { get }
     var presetPreviewMenuBarHeight: CGFloat { get }
+    var editingSpaceUUID: String? { get }
+    var hasCurrentSpaceSettingsOverride: Bool { get }
+    var referencedTextureIDs: Set<String> { get }
 
     func effectSettings(for scope: EffectScope) -> WallpaperEffectSettings
     func setEnabled(_ enabled: Bool)
@@ -25,6 +28,11 @@ protocol WallpaperEffectControlling: AnyObject {
 }
 
 extension WallpaperEffectControlling {
+    var editingSpaceUUID: String? { nil }
+    var hasCurrentSpaceSettingsOverride: Bool { isCurrentSpaceCustomized }
+    var referencedTextureIDs: Set<String> {
+        Set([effectSettings(for: .global), effectSettings(for: .currentSpace)].compactMap(\.textureID))
+    }
     var presetPreviewMenuBarHeight: CGFloat { 24 }
     func presetPreviewContext() async -> PresetPreviewContext? { nil }
 }
@@ -63,6 +71,19 @@ final class MenuBarPopoverModel: ObservableObject {
     @Published private(set) var textureCatalogRevision = 0
     @Published private(set) var isQuitConfirmationPresented = false
     @Published var exportPresetIDs: Set<String> = []
+    @Published var presetSearch = ""
+    @Published var favoritesOnly = false
+    @Published private(set) var libraryRevision = 0
+    @Published private var presetUndo: PresetUndo?
+    private struct PresetUndo {
+        let settings: WallpaperEffectSettings
+        let applied: WallpaperEffectSettings
+        let scope: EffectScope
+        let space: String?
+        let hadOverride: Bool
+        let wasEnabled: Bool
+    }
+    let libraryStore: PresetLibraryStore
     @Published private(set) var importPreview: PresetPackageImportPreview?
     @Published private(set) var presetPackageError: String?
     @Published private(set) var presetPackageCompletion: String?
@@ -80,6 +101,7 @@ final class MenuBarPopoverModel: ObservableObject {
     private let textureStore: TextureAssetStore
     private let presetPackageService: any PresetPackageServicing
     private let terminateApplication: () -> Void
+    private var packageRequestID = UUID()
     private var isLoadingFromController = false
     private var presetPreviewContextKey: String?
     private var latestPresetPreviewContext: PresetPreviewContext?
@@ -95,8 +117,10 @@ final class MenuBarPopoverModel: ObservableObject {
         presetStore: EffectPresetStore = .shared,
         textureStore: TextureAssetStore = .shared,
         presetPackageService: any PresetPackageServicing = PresetPackageService.shared,
+        libraryStore: PresetLibraryStore = PresetLibraryStore(),
         terminateApplication: @escaping () -> Void = { NSApp.terminate(nil) }
     ) {
+        self.libraryStore = libraryStore
         self.controller = controller
         self.presetStore = presetStore
         self.textureStore = textureStore
@@ -115,6 +139,55 @@ final class MenuBarPopoverModel: ObservableObject {
             builtInSections: builtInPresetSections,
             userPresets: userPresets
         )
+    }
+
+    var filteredPresetCatalogSections: [PresetCatalogSection] {
+        presetCatalogSections.map { section in
+            PresetCatalogSection(id: section.id, title: section.title, presets: section.presets.filter {
+                libraryStore.matches($0, query: presetSearch, favoritesOnly: favoritesOnly)
+            })
+        }.filter { !$0.presets.isEmpty || ($0.id == "user" && presetSearch.isEmpty && !favoritesOnly) }
+    }
+
+    func toggleFavorite(_ id: String) { libraryStore.toggleFavorite(id); libraryRevision &+= 1 }
+    func setPresetTags(_ tags: String, for id: String) {
+        libraryStore.setTags(tags.components(separatedBy: ","), for: id)
+        libraryRevision &+= 1
+    }
+
+    var canUndoPreset: Bool {
+        guard let undo = presetUndo, undo.scope == scope else { return false }
+        guard scope == .global || (undo.space != nil && undo.space == controller.editingSpaceUUID) else { return false }
+        return controller.effectSettings(for: scope).matchesPresetSettings(undo.applied)
+    }
+
+    func undoPreset() {
+        guard canUndoPreset, let undo = presetUndo else { return }
+        presetUndo = nil
+        if undo.scope == .currentSpace && !undo.hadOverride {
+            controller.clearCurrentSpaceOverride()
+        } else {
+            controller.updateEffectSettings(undo.settings, for: undo.scope)
+        }
+        if undo.scope == .currentSpace { controller.setCurrentSpaceEffectEnabled(undo.wasEnabled) }
+        controller.applySettingsChange(delay: 0)
+        selectedPresetID = nil
+        reloadFromController()
+    }
+
+    var unusedTextures: [TextureAsset] {
+        textureStore.customAssets.filter { !referencedTextureIDs.contains($0.id) }
+    }
+
+    private var referencedTextureIDs: Set<String> {
+        var references = controller.referencedTextureIDs.union(presetStore.presets.compactMap { $0.settings.textureID })
+        if let id = presetUndo?.settings.textureID { references.insert(id) }
+        return references
+    }
+
+    func removeUnusedTexture(_ id: String) throws {
+        try textureStore.removeUnusedTexture(id: id, referencedIDs: referencedTextureIDs)
+        textureCatalogRevision &+= 1
     }
 
     var userPresets: [EffectPreset] {
@@ -238,7 +311,8 @@ final class MenuBarPopoverModel: ObservableObject {
             return
         }
 
-        presetPreviewContextKey = context.cacheKey
+        // A partial or cancelled pass must never be considered a complete wallpaper cache.
+        presetPreviewContextKey = nil
         presetPreviews = presetSamplePreviews
         for preset in presets {
             guard !Task.isCancelled else { return }
@@ -264,6 +338,7 @@ final class MenuBarPopoverModel: ObservableObject {
                 size: NSSize(width: rendered.width, height: rendered.height)
             )
         }
+        presetPreviewContextKey = context.cacheKey
     }
 
     private func renderPresetSamplePreviews() async {
@@ -302,6 +377,8 @@ final class MenuBarPopoverModel: ObservableObject {
             )
             presetSamplePreviews[preset.id] = image
             if presetPreviews[preset.id] == nil {
+                // Imports introduce sample placeholders even when the wallpaper is unchanged.
+                presetPreviewContextKey = nil
                 presetPreviews[preset.id] = image
             }
         }
@@ -484,6 +561,7 @@ final class MenuBarPopoverModel: ObservableObject {
     }
 
     func resetSettings() {
+        presetUndo = nil
         selectedPresetID = nil
         switch scope {
         case .global:
@@ -497,6 +575,11 @@ final class MenuBarPopoverModel: ObservableObject {
 
     func applyPreset(id: String) {
         guard let preset = presetStore.preset(id: id) else { return }
+        guard scope == .global || controller.canCustomizeCurrentSpace else { return }
+        presetUndo = PresetUndo(settings: controller.effectSettings(for: scope), applied: preset.settings,
+            scope: scope, space: controller.editingSpaceUUID,
+            hadOverride: controller.hasCurrentSpaceSettingsOverride,
+            wasEnabled: controller.isCurrentSpaceEffectEnabled)
         selectedPresetID = preset.id
         controller.updateEffectSettings(preset.settings, for: scope)
         controller.applySettingsChange(delay: 0)
@@ -592,6 +675,7 @@ final class MenuBarPopoverModel: ObservableObject {
 
     func deletePreset(id: String) throws {
         try presetStore.deleteUserPreset(id: id)
+        libraryStore.remove(id)
         if selectedPresetID == id {
             selectedPresetID = nil
         }
@@ -613,6 +697,11 @@ final class MenuBarPopoverModel: ObservableObject {
         }
         try deletePreset(id: activeUserPreset.id)
     }
+
+    func requestAbout() { dialogPresenter?.presentAbout() }
+    func requestTextureManagement() { dialogPresenter?.presentTextureManagement() }
+    func requestPresetSharing() { dialogPresenter?.presentPresetSharing() }
+    func requestCommunityGallery() { dialogPresenter?.presentCommunityGallery() }
 
     func requestTextureImport() {
         dialogPresenter?.presentTextureImport()
@@ -645,6 +734,8 @@ final class MenuBarPopoverModel: ObservableObject {
     }
 
     func exportSelectedPresets(to destinationURL: URL) async {
+        let requestID = UUID()
+        packageRequestID = requestID
         presetPackageError = nil
         presetPackageCompletion = nil
         do {
@@ -652,30 +743,56 @@ final class MenuBarPopoverModel: ObservableObject {
                 presetIDs: userPresets.filter { exportPresetIDs.contains($0.id) }.map(\.id),
                 to: destinationURL
             )
+            guard !Task.isCancelled, packageRequestID == requestID else { return }
             presetPackageCompletion = Self.exportSummary(result)
         } catch {
+            guard !Task.isCancelled, packageRequestID == requestID else { return }
             presetPackageError = error.localizedDescription
         }
     }
 
     func preparePresetImport(from packageURL: URL) async {
+        let requestID = UUID()
+        packageRequestID = requestID
         presetPackageError = nil
         presetPackageCompletion = nil
         if let importPreview { presetPackageService.discardImport(importPreview) }
         importPreview = nil
         do {
-            importPreview = try await presetPackageService.prepareImport(from: packageURL)
+            let prepared = try await presetPackageService.prepareImport(from: packageURL)
+            guard !Task.isCancelled, packageRequestID == requestID else {
+                presetPackageService.discardImport(prepared)
+                return
+            }
+            importPreview = prepared
         } catch {
+            guard !Task.isCancelled, packageRequestID == requestID else { return }
             presetPackageError = error.localizedDescription
         }
     }
 
-    func commitPresetImport() {
+    @Published var shareUsingCurrentWallpaper = false
+
+    func prepareShare(presets: [EffectPreset], in parent: URL = FileManager.default.temporaryDirectory) async throws -> PresetShareResult {
+        let wallpaper: PresetPreviewContext?
+        if shareUsingCurrentWallpaper {
+            guard let context = await controller.presetPreviewContext() else { throw PresetSharingError.wallpaperUnavailable }
+            wallpaper = context
+        } else {
+            wallpaper = nil
+        }
+        try Task.checkCancellation()
+        return try await PresetSharingService(packages: presetPackageService, textures: textureStore)
+            .prepare(presets: presets, in: parent, wallpaper: wallpaper)
+    }
+
+    func commitPresetImport(selectedIDs: Set<String>? = nil) {
         guard let preview = importPreview else { return }
         presetPackageError = nil
         presetPackageCompletion = nil
         do {
-            let result = try presetPackageService.commitImport(preview)
+            let result = try presetPackageService.commitImport(preview,
+                selectedIDs: selectedIDs ?? Set(preview.presets.map(\.id)))
             importPreview = nil
             presetRevision &+= 1
             textureCatalogRevision &+= 1
@@ -686,7 +803,29 @@ final class MenuBarPopoverModel: ObservableObject {
         }
     }
 
+    func commitPresetImportInBackground(selectedIDs: Set<String>) async {
+        guard let preview = importPreview else { return }
+        let requestID = UUID()
+        packageRequestID = requestID
+        presetPackageError = nil
+        presetPackageCompletion = nil
+        do {
+            let result = try await presetPackageService.commitImportInBackground(preview, selectedIDs: selectedIDs)
+            guard !Task.isCancelled, packageRequestID == requestID else { return }
+            importPreview = nil
+            presetRevision &+= 1
+            textureCatalogRevision &+= 1
+            presetPackageCompletion = Self.importSummary(result)
+        } catch {
+            guard !Task.isCancelled, packageRequestID == requestID else { return }
+            presetPackageService.discardImport(preview)
+            importPreview = nil
+            presetPackageError = error.localizedDescription
+        }
+    }
+
     func cancelPresetImport() {
+        packageRequestID = UUID()
         guard let preview = importPreview else { return }
         presetPackageService.discardImport(preview)
         importPreview = nil
@@ -766,6 +905,7 @@ final class MenuBarPopoverModel: ObservableObject {
 
     private func applySettings(delay: TimeInterval) {
         guard !isLoadingFromController else { return }
+        presetUndo = nil
 
         controller.updateEffectSettings(displayedSettings, for: scope)
         controller.applySettingsChange(delay: delay)
@@ -821,6 +961,7 @@ final class MenuBarPopoverModel: ObservableObject {
 }
 
 struct MenuBarPopoverView: View {
+    @AppStorage(WallpaperAgentCachePruner.automaticCleanupKey) private var automaticCacheCleanup = false
     @ObservedObject var model: MenuBarPopoverModel
     @State private var effectGroupDisclosureState = EffectGroupDisclosureState()
     @State private var isPresetCatalogPresented = false
@@ -1394,6 +1535,24 @@ struct MenuBarPopoverView: View {
             }
 
             Spacer(minLength: 8)
+
+            Menu {
+                Button("About WandelBar…", action: model.requestAbout)
+                UpdateMenu()
+                Divider()
+                Menu("Maintenance") {
+                    Button("Manage Textures…", action: model.requestTextureManagement)
+                    Toggle("Clean up macOS wallpaper cache automatically", isOn: $automaticCacheCleanup)
+                        .help("Removes cached copies of old WandelBar renders. macOS may ask for access to data from other apps.")
+                }
+                Button("Community Presets…", action: model.requestCommunityGallery)
+                Divider()
+                Button("Undo Preset", action: model.undoPreset).disabled(!model.canUndoPreset)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+            .accessibilityLabel("WandelBar options")
 
             Toggle("Enable WandelBar", isOn: Binding(
                 get: { model.isEnabled },

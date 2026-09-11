@@ -5,6 +5,9 @@ struct PresetCatalogView: View {
     let dismiss: () -> Void
 
     @State private var presetName = ""
+    @State private var tagTarget: EffectPreset?
+    @State private var tagText = ""
+    @State private var showingTags = false
     @State private var presetDialogError: String?
     @State private var showingSavePreset = false
     @State private var showingRenamePreset = false
@@ -28,6 +31,25 @@ struct PresetCatalogView: View {
         VStack(spacing: 0) {
             catalogHeader
 
+            HStack(spacing: 10) {
+                TextField("Search names or tags", text: $model.presetSearch)
+                    .textFieldStyle(.roundedBorder)
+                Toggle(isOn: $model.favoritesOnly) {
+                    Image(systemName: model.favoritesOnly ? "star.fill" : "star")
+                }.toggleStyle(.button).help("Favorites only")
+                Button(action: model.requestCommunityGallery) {
+                    Image(systemName: "globe")
+                }
+                .help("Community Gallery")
+                .accessibilityLabel("Community Gallery")
+            }.padding(.horizontal, 12).padding(.bottom, 10)
+            if model.canUndoPreset {
+                HStack {
+                    Text("Preset applied").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Undo", action: model.undoPreset).buttonStyle(.borderless)
+                }.padding(.horizontal, 16).padding(.bottom, 8)
+            }
             Divider()
 
             if model.isUsingPresetPreviewFallback {
@@ -44,8 +66,13 @@ struct PresetCatalogView: View {
             }
 
             ScrollView {
+                if model.filteredPresetCatalogSections.isEmpty {
+                    ContentUnavailableView("No matching presets", systemImage: "magnifyingglass",
+                        description: Text("Try another search or turn off the favorites filter."))
+                        .padding(.vertical, 24)
+                }
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                    ForEach(model.presetCatalogSections) { section in
+                    ForEach(model.filteredPresetCatalogSections) { section in
                         Section {
                             if section.id == "user" {
                                 SaveCurrentPresetCard(
@@ -71,6 +98,22 @@ struct PresetCatalogView: View {
                                 ) {
                                     model.applyPreset(id: preset.id)
                                 }
+                                .contextMenu {
+                                    Button(model.libraryStore.isFavorite(preset.id) ? "Remove Favorite" : "Add Favorite") {
+                                        model.toggleFavorite(preset.id)
+                                    }
+                                    Button("Edit Tags…") {
+                                        tagTarget = preset
+                                        tagText = model.libraryStore.tags(for: preset.id).joined(separator: ", ")
+                                        showingTags = true
+                                    }
+                                }
+                                .overlay(alignment: .bottomTrailing) {
+                                    if model.libraryStore.isFavorite(preset.id) {
+                                        Image(systemName: "star.fill").font(.system(size: 8))
+                                            .foregroundStyle(.yellow).padding(3).allowsHitTesting(false)
+                                    }
+                                }
                             }
                         } header: {
                             Text(section.title)
@@ -89,6 +132,15 @@ struct PresetCatalogView: View {
         .background(.regularMaterial)
         .task(id: model.presetRevision) {
             await model.preparePresetPreviews()
+        }
+        .alert("Preset Tags", isPresented: $showingTags) {
+            TextField("Tags separated by commas", text: $tagText)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                if let tagTarget { model.setPresetTags(tagText, for: tagTarget.id) }
+            }
+        } message: {
+            Text("Use up to 12 short tags. Tags and favorites stay on this Mac.")
         }
         .alert("Save Preset", isPresented: $showingSavePreset) {
             TextField("Name", text: $presetName)
@@ -140,18 +192,18 @@ struct PresetCatalogView: View {
 
                 Spacer()
 
-                Button(action: model.requestPresetImport) {
-                    Image(systemName: "square.and.arrow.down")
-                }
-                .accessibilityLabel("Import Presets")
-                .help("Import Presets")
+                Menu {
+                    Button("Import…", action: model.requestPresetImport)
+                    Button("Export…", action: model.requestPresetExport).disabled(model.userPresets.isEmpty)
+                    Button("Share to Discussions…", action: model.requestPresetSharing).disabled(model.userPresets.isEmpty)
+                    Divider()
+                    Button("Community Gallery…", action: model.requestCommunityGallery)
+                    Link("Preset Exchange", destination: AppInformation.exchange)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }.menuStyle(.borderlessButton).fixedSize()
+                .accessibilityLabel("Preset actions")
 
-                Button(action: model.requestPresetExport) {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                .disabled(model.userPresets.isEmpty)
-                .accessibilityLabel("Export Presets")
-                .help("Export Presets")
             }
             .buttonStyle(.borderless)
         }

@@ -76,28 +76,74 @@ Every preset remains fully editable after it is applied. Use the **Save Current*
 your changes as a personal preset. Presets in **My Presets** can be renamed or deleted directly from
 their cards.
 
+Search presets by name or personal tags, use the star to show favorites, or **Undo** the last
+preset application. **Manage Textures…** removes custom textures that are no longer in use.
+
 ### Share complete preset packages
 
-Personal presets can be exported as a single `.wandelbar-presets` file. A package contains the
-complete effect settings and embeds any custom textures used by the selected presets, making it easy
-to share a finished collection without sending separate image files.
+Export personal presets and their custom textures as one `.wandelbar-presets` file. Import previews
+the contents and lets you choose what to add without overwriting or applying existing presets.
 
-Importing first shows a preview of what will be added. Existing presets are not overwritten:
-conflicting names receive an `(Imported)` suffix, and imported presets are not applied automatically.
-Import and export controls are available in the preset catalog.
+**Share to Discussions…** prepares a GitHub post, a package and a preview using the sample or current
+wallpaper. Drag the attachments into the draft together, review it and publish when ready.
+See the [sharing guide](docs/SHARING.md).
 
-Discover community-made presets in the
-[Preset Exchange](https://github.com/alexiosus/WandelBar/discussions/categories/preset-exchange). To
-publish your own collection, follow the
-[preset sharing guide](https://github.com/alexiosus/WandelBar/discussions/1).
+### Community Gallery
+
+Click the **globe beside the favorites star** to browse approved community packages, enlarge their
+previews and choose presets to import. Browsing requires no GitHub account.
+
+Packages come from the official
+[Preset Exchange](https://github.com/alexiosus/WandelBar/discussions/categories/preset-exchange)
+and are verified before import. Read [how approval works](docs/COMMUNITY.md).
+
+<p align="center">
+  <img src="docs/community-gallery.png" alt="Community gallery">
+</p>
+
+## Download and install
+
+Download the latest DMG from [GitHub Releases](https://github.com/alexiosus/WandelBar/releases).
+
+1. Open the downloaded `.dmg` file.
+2. Drag **WandelBar** to **Applications**.
+3. Open **WandelBar** from Applications.
+
+WandelBar is signed with Developer ID and notarized by Apple. Download official builds only from
+[alexiosus/WandelBar](https://github.com/alexiosus/WandelBar).
+
+See the [changelog](CHANGELOG.md) for what's new.
+
+Use **Options (⋯) → Check for Updates…** to update without downloading a new DMG manually.
+Automatic checks and installation are optional; enable them in **Update Settings**.
+
+Current release builds support Apple silicon Macs (`arm64`). macOS Tahoe still supports a small
+number of Intel Macs, but an Intel release is not currently provided.
+
+### Homebrew
+
+Install from the official project tap:
+
+```sh
+brew tap alexiosus/wandelbar https://github.com/alexiosus/WandelBar
+brew install --cask alexiosus/wandelbar/wandelbar
+```
+
+You can update from within WandelBar, or run
+`brew upgrade --cask --greedy alexiosus/wandelbar/wandelbar`.
 
 ## Getting started
 
-1. Open WandelBar and click its icon in the menu bar.
-2. Turn the app on. WandelBar saves the original wallpaper before applying its first effect.
-3. Open **Preset** and choose a starting point, or adjust the controls manually.
-4. Use **Default** for the shared design, or **This Space** for the current desktop Space.
-5. Optionally enable **Launch at Login** or **Don't Apply on Lock Screen**.
+1. Open WandelBar. On macOS Tahoe, turn off **System Settings → Menu Bar → Show menu bar background**.
+   WandelBar shows a one-time reminder with a button to open this panel.
+
+   ![First-launch reminder and the Menu Bar background setting](docs/first-launch.png)
+
+2. Click WandelBar's icon in the menu bar.
+3. Turn the app on. WandelBar saves the original wallpaper before applying its first effect.
+4. Open **Preset** and choose a starting point, or adjust the controls manually.
+5. Use **Default** for the shared design, or **This Space** for the current desktop Space.
+6. Optionally enable **Launch at Login** or **Don't Apply on Lock Screen**.
 
 > [!NOTE]
 > If the wallpaper is stored in a protected folder such as Downloads or Pictures, macOS may ask
@@ -112,27 +158,6 @@ forward.
   <img src="docs/panel.png" width="620" alt="Main settings panel and presets catalog">
 </p>
 
-## Download and install
-
-Download the latest DMG from [GitHub Releases](https://github.com/alexiosus/WandelBar/releases).
-
-1. Open the downloaded `.dmg` file.
-2. Drag **WandelBar** to **Applications**.
-3. Try to open **WandelBar** once. When macOS displays the security warning, click **Done**.
-4. Open **System Settings → Privacy & Security**, scroll to **Security**, and click
-   **Open Anyway** next to the WandelBar message.
-5. Confirm with **Open** and authenticate if macOS asks you to.
-
-> [!IMPORTANT]
-> The current preview releases are not signed with an Apple Developer ID or notarized by Apple, so
-> macOS blocks the normal first launch. **Open Anyway** appears only after an attempted launch and
-> remains available for about an hour. Once approved, WandelBar opens normally on subsequent
-> launches. Download releases only from this repository. See
-> [Apple's instructions for opening an app from an unknown developer](https://support.apple.com/guide/mac-help/-mh40616/mac).
-
-Current release builds support Apple silicon Macs (`arm64`). macOS Tahoe still supports a small
-number of Intel Macs, but an Intel release is not currently provided.
-
 ## Build from source
 
 To build and package WandelBar locally:
@@ -144,8 +169,9 @@ cd WandelBar
 open Build/WandelBar.app
 ```
 
-The script creates an ad-hoc signed application at `Build/WandelBar.app`. To create the same DMG used
-for GitHub releases:
+The script creates `Build/WandelBar.app`. It uses an available Developer ID certificate when there
+is exactly one, or an ad-hoc signature when none is installed. Local packaging alone does not
+notarize the app. To create a DMG:
 
 ```sh
 ./Scripts/create_dmg.sh
@@ -170,9 +196,23 @@ preferences. Rendering happens locally and off the main thread.
 
 ## Privacy
 
-WandelBar has no accounts, analytics, or network service. Wallpapers, textures, presets, packages,
-and generated files remain on the Mac. Photos access is requested only when it is needed to export a
-wallpaper from the Photos library; macOS may first download that asset from iCloud.
+WandelBar has no accounts or analytics. Rendering and personal settings stay on your Mac.
+The optional Community Gallery downloads content from GitHub, which receives normal connection
+information such as your IP address. It does not upload your wallpaper or local settings.
+
+Sharing prepares local files for you to publish yourself. Packages include custom textures;
+current-wallpaper previews also include the visible wallpaper image. Photos access is requested
+only when needed to export a wallpaper from your library.
+
+**About WandelBar…** includes the app version, official links, [Ko-fi support](https://ko-fi.com/alexiosus)
+and third-party notices.
+
+## Disk usage
+
+WandelBar removes its unused generated wallpapers, but macOS may retain large cached copies.
+**Options (⋯) → Maintenance → Clean up macOS wallpaper cache automatically** can remove known old WandelBar
+copies. It is **off by default** and may prompt for access to data from other apps when enabled.
+Current wallpapers and unrelated files are preserved; older, untracked cache files are left alone.
 
 ## Limitations
 
