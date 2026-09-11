@@ -364,3 +364,48 @@ private func textureMaximumHorizontalLuminanceSpread(for asset: TextureAsset) th
         return (luminances.max() ?? 0) - (luminances.min() ?? 0)
     }.max() ?? 0
 }
+
+@Test @MainActor func textureCleanupRefusesReferencesAndRemovesUnusedFiles() async throws {
+    let fixture = try TextureStoreFixture()
+    defer {
+        fixture.defaults.removePersistentDomain(forName: fixture.suiteName)
+        try? FileManager.default.removeItem(at: fixture.directory)
+    }
+    let image = try fixture.makeImage(name: "unused", type: .png, width: 32, height: 32)
+    let asset = try await fixture.store.importTexture(from: image)
+    let url = try #require(fixture.store.resolvedURL(for: asset.id))
+    #expect(throws: (any Error).self) {
+        try fixture.store.removeUnusedTexture(id: asset.id, referencedIDs: [asset.id])
+    }
+    #expect(FileManager.default.fileExists(atPath: url.path))
+    try fixture.store.removeUnusedTexture(id: asset.id, referencedIDs: [])
+    #expect(fixture.store.asset(id: asset.id) == nil)
+    #expect(!FileManager.default.fileExists(atPath: url.path))
+}
+
+@Test @MainActor func stagedTextureInstallDoesNotPublishUntilCommitAndRejectsChanges() async throws {
+    let fixture = try TextureStoreFixture()
+    defer { fixture.cleanUp() }
+    let image = try fixture.makeImage(name: "stage", type: .png, width: 17, height: 19)
+    let data = try TextureAssetStore.normalizeTextureData(Data(contentsOf: image))
+    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    let payload = PackageTexturePayload(sourceID: "custom.\(digest)", name: "Staged", pngData: data, sha256: digest)
+    let stage = try await fixture.store.stageValidatedPackageTextures([payload])
+    #expect(fixture.store.customAssets.isEmpty)
+    #expect(fixture.store.resolvedURL(for: payload.sourceID) == nil)
+    let result = try fixture.store.installStagedPackageTextures(stage)
+    #expect(result.newTextureCount == 1)
+    #expect(fixture.store.resolvedURL(for: payload.sourceID) != nil)
+    #expect(throws: (any Error).self) { try fixture.store.installStagedPackageTextures(stage) }
+    fixture.store.rollbackPackageInstallation(result)
+    #expect(fixture.store.customAssets.isEmpty)
+}
+
+@Test @MainActor func canceledTextureStagingPublishesNothing() async throws {
+    let fixture = try TextureStoreFixture()
+    defer { fixture.cleanUp() }
+    let task = Task { try await fixture.store.stageValidatedPackageTextures([]) }
+    task.cancel()
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(fixture.store.customAssets.isEmpty)
+}

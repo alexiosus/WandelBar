@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 private final class FakeWallpaperEffectController: WallpaperEffectControlling {
+    var editingSpaceUUID: String? = "test-space"
     var isEnabled = true
     var state: WandelBarState = .active(since: nil)
     var canCustomizeCurrentSpace = true
@@ -865,4 +866,119 @@ private final class RecordingMenuBarDialogPresenter: MenuBarDialogPresenting {
     model.prepareForDisplay()
 
     #expect(controller.refreshWallpaperSupportCallCount == 1)
+}
+
+@Test @MainActor func undoPresetRestoresSettingsAndIsInvalidatedByManualEdits() {
+    let controller = FakeWallpaperEffectController()
+    let before = controller.globalSettings
+    let model = MenuBarPopoverModel(controller: controller)
+    model.applyPreset(id: EffectPreset.BuiltInID.blackBar)
+    #expect(model.canUndoPreset)
+    model.undoPreset()
+    #expect(controller.globalSettings == before)
+    #expect(!model.canUndoPreset)
+    model.applyPreset(id: EffectPreset.BuiltInID.blackBar)
+    model.setBlurRadius(13)
+    #expect(!model.canUndoPreset)
+}
+
+@Test @MainActor func undoPresetCannotModifyAnotherSpace() {
+    let controller = FakeWallpaperEffectController()
+    controller.editingSpaceUUID = "first"
+    let model = MenuBarPopoverModel(controller: controller)
+    model.setScope(.currentSpace)
+    model.applyPreset(id: EffectPreset.BuiltInID.blackBar)
+    controller.editingSpaceUUID = "second"
+    model.reloadFromController()
+    #expect(!model.canUndoPreset)
+    let before = controller.spaceSettings
+    model.undoPreset()
+    #expect(controller.spaceSettings == before)
+}
+
+@Test @MainActor func undoFirstSpacePresetRemovesItsNewOverride() {
+    let controller = FakeWallpaperEffectController()
+    controller.editingSpaceUUID = "first"
+    let model = MenuBarPopoverModel(controller: controller)
+    model.setScope(.currentSpace)
+    model.applyPreset(id: EffectPreset.BuiltInID.blackBar)
+    #expect(controller.isCurrentSpaceCustomized)
+    model.undoPreset()
+    #expect(!controller.isCurrentSpaceCustomized)
+}
+
+@MainActor private final class DelayedExportService: PresetPackageServicing {
+    var continuation: CheckedContinuation<PresetPackageExportSummary, any Error>?
+    func export(presetIDs: [String], to destinationURL: URL) async throws -> PresetPackageExportSummary {
+        if destinationURL.lastPathComponent == "first" {
+            return try await withCheckedThrowingContinuation { continuation = $0 }
+        }
+        return PresetPackageExportSummary(presetCount: 2, textureCount: 0)
+    }
+    func prepareImport(from packageURL: URL) async throws -> PresetPackageImportPreview { throw PresetPackageError.malformedPackage }
+    func discardImport(_ preview: PresetPackageImportPreview) {}
+    func commitImport(_ preview: PresetPackageImportPreview) throws -> PresetPackageImportResult { throw PresetPackageError.previewExpired }
+}
+
+@Test @MainActor func canceledExportCannotOverwriteANewerSuccess() async {
+    let service = DelayedExportService()
+    let model = MenuBarPopoverModel(controller: FakeWallpaperEffectController(), presetPackageService: service)
+    let first = Task { await model.exportSelectedPresets(to: URL(fileURLWithPath: "/tmp/first")) }
+    while service.continuation == nil { await Task.yield() }
+    first.cancel()
+    await model.exportSelectedPresets(to: URL(fileURLWithPath: "/tmp/second"))
+    service.continuation?.resume(throwing: CancellationError())
+    await first.value
+    #expect(model.presetPackageError == nil)
+    #expect(model.presetPackageCompletion == "Exported 2 presets.")
+}
+
+@Test @MainActor func sharingDefaultsToTemporarySampleAndAccessesWallpaperOnlyWhenSelected() async throws {
+    let fixture = try TextureStoreFixture()
+    defer { fixture.cleanUp() }
+    let presets = EffectPresetStore(defaults: fixture.defaults, storageKey: "share-consent")
+    let preset = try presets.createUserPreset(name: "Shared", settings: .default)
+    let packages = PresetPackageService(presetStore: presets, textureStore: fixture.store)
+    let controller = FakeWallpaperEffectController()
+    var wallpaperRequests = 0
+    controller.onPresetPreviewContextRequested = { wallpaperRequests += 1 }
+    let model = MenuBarPopoverModel(controller: controller, presetStore: presets,
+        textureStore: fixture.store, presetPackageService: packages)
+    #expect(!model.shareUsingCurrentWallpaper)
+    let share = try await model.prepareShare(presets: [preset])
+    defer { try? FileManager.default.removeItem(at: share.directory) }
+    #expect(wallpaperRequests == 0)
+    #expect(!share.usesCurrentWallpaper)
+    #expect(share.directory.deletingLastPathComponent().standardizedFileURL == FileManager.default.temporaryDirectory.standardizedFileURL)
+    model.shareUsingCurrentWallpaper = true
+    await #expect(throws: PresetSharingError.self) {
+        _ = try await model.prepareShare(presets: [preset])
+    }
+    #expect(wallpaperRequests == 1)
+}
+
+@Test @MainActor func newlyImportedCatalogEntryGetsCurrentWallpaperPreview() async throws {
+    let suite = "WandelBarTests.ImportPreview.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = EffectPresetStore(defaults: defaults, storageKey: "presets")
+    let controller = FakeWallpaperEffectController()
+    let source = try #require(PresetSampleBackground.renderURL)
+    controller.previewContext = PresetPreviewContext(
+        sourceURL: source,
+        display: DisplaySnapshot(id: "test", localizedName: "Test", frame: CGRect(x: 0, y: 0, width: 1440, height: 900), backingScaleFactor: 2, statusBarThickness: 24),
+        storedDesktop: StoredDesktop(urlString: source.absoluteString, imageScaling: nil, allowClipping: nil, fillColorData: nil),
+        sourceIdentity: "unchanged-wallpaper"
+    )
+    let model = MenuBarPopoverModel(controller: controller, presetStore: store)
+    await model.preparePresetPreviews()
+    #expect(!model.isUsingPresetPreviewFallback)
+    // Import adds a new ID without changing the wallpaper context.
+    let added = try store.createUserPreset(name: "Imported", settings: .default)
+    var sample = model.presetPreviewPlaceholder
+    controller.onPresetPreviewContextRequested = { sample = model.presetPreviews[added.id] }
+    await model.preparePresetPreviews()
+    controller.onPresetPreviewContextRequested = nil
+    let preview = try #require(model.presetPreviews[added.id])
+    #expect(preview !== sample)
 }

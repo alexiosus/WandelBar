@@ -130,3 +130,115 @@ private final class PresetPackageFixture {
     #expect(manifest.presets[0].texture?.id == TextureAsset.azureReflection.id)
     #expect(!FileManager.default.fileExists(atPath: extraction.appendingPathComponent("textures").path))
 }
+
+@Test @MainActor func selectedImportInstallsOnlySelectedTextureAndCarriesVisualSettings() async throws {
+    let source = try PresetPackageFixture(), destination = try PresetPackageFixture()
+    defer { source.cleanUp(); destination.cleanUp() }
+    let image = try source.textures.makeImage(name: "Unselected", type: .png, width: 24, height: 12)
+    let texture = try await source.textures.store.importTexture(from: image)
+    let selected = try source.createPreset(name: "Selected", blur: 27)
+    let unselected = try source.createPreset(name: "Unselected", textureID: texture.id)
+    _ = try await source.service.export(presetIDs: [selected.id, unselected.id], to: source.packageURL)
+    let preview = try await destination.service.prepareImport(from: source.packageURL)
+    #expect(preview.presets.first { $0.id == selected.id }?.settings.blurRadiusPoints == 27)
+    #expect(preview.presets.first { $0.id == unselected.id }?.previewPNG != nil)
+    #expect(preview.presets.first { $0.id == selected.id }?.previewPNG != nil)
+    let result = try destination.service.commitImport(preview, selectedIDs: [selected.id])
+    #expect(result == PresetPackageImportResult(presetCount: 1, newTextureCount: 0))
+    #expect(destination.presets.userPresets.map(\.name) == ["Selected"])
+    #expect(destination.textures.store.customAssets.isEmpty)
+}
+
+@Test @MainActor func exportAppliesExtractedAndCompressedLimitsWithoutReplacingDestination() async throws {
+    let fixture = try PresetPackageFixture()
+    defer { fixture.cleanUp() }
+    let preset = try fixture.createPreset(name: "Test")
+    let original = Data("keep this".utf8)
+    try original.write(to: fixture.packageURL)
+    for limits in [
+        PresetPackageLimits(maximumPresets: 100, maximumTextures: 100, maximumCompressedBytes: 100000, maximumExtractedBytes: 10),
+        PresetPackageLimits(maximumPresets: 100, maximumTextures: 100, maximumCompressedBytes: 10, maximumExtractedBytes: 100000)
+    ] {
+        let service = PresetPackageService(presetStore: fixture.presets, textureStore: fixture.textures.store, limits: limits)
+        await #expect(throws: PresetPackageError.limitsExceeded) {
+            try await service.export(presetIDs: [preset.id], to: fixture.packageURL)
+        }
+        #expect(try Data(contentsOf: fixture.packageURL) == original)
+    }
+}
+
+@Test @MainActor func cancelledExportDoesNotWriteDestination() async throws {
+    let fixture = try PresetPackageFixture()
+    defer { fixture.cleanUp() }
+    let preset = try fixture.createPreset(name: "Cancelled")
+    let task = Task { try await fixture.service.export(presetIDs: [preset.id], to: fixture.packageURL) }
+    task.cancel()
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(!FileManager.default.fileExists(atPath: fixture.packageURL.path))
+}
+
+private struct BackgroundCheckingArchive: PresetPackageArchiving {
+    func createArchive(from sourceDirectory: URL, at destinationURL: URL) throws {
+        #expect(!Thread.isMainThread)
+        try SystemPresetPackageArchive().createArchive(from: sourceDirectory, at: destinationURL)
+    }
+    func listEntries(in archiveURL: URL) throws -> [String] {
+        #expect(!Thread.isMainThread)
+        return try SystemPresetPackageArchive().listEntries(in: archiveURL)
+    }
+    func extractArchive(at archiveURL: URL, to destinationDirectory: URL) throws {
+        #expect(!Thread.isMainThread)
+        try SystemPresetPackageArchive().extractArchive(at: archiveURL, to: destinationDirectory)
+    }
+}
+
+@Test @MainActor func archiveIOLeavesMainActorForBothDirections() async throws {
+    let fixture = try PresetPackageFixture()
+    defer { fixture.cleanUp() }
+    let preset = try fixture.createPreset(name: "Background")
+    let service = PresetPackageService(presetStore: fixture.presets, textureStore: fixture.textures.store, archive: BackgroundCheckingArchive())
+    _ = try await service.export(presetIDs: [preset.id], to: fixture.packageURL)
+    let preview = try await service.prepareImport(from: fixture.packageURL)
+    service.discardImport(preview)
+}
+
+@Test @MainActor func exportRejectsOversizedManifestString() async throws {
+    let fixture = try PresetPackageFixture()
+    defer { fixture.cleanUp() }
+    let preset = try fixture.createPreset(name: String(repeating: "x", count: 1025))
+    await #expect(throws: PresetPackageError.limitsExceeded) {
+        try await fixture.service.export(presetIDs: [preset.id], to: fixture.packageURL)
+    }
+}
+
+@Test @MainActor func backgroundImportCommitsOnlyTheSelectedPresetAndTexture() async throws {
+    let source = try PresetPackageFixture()
+    let destination = try PresetPackageFixture()
+    defer { source.cleanUp(); destination.cleanUp() }
+    let image = try source.textures.makeImage(name: "Async", type: .png, width: 32, height: 18)
+    let texture = try await source.textures.store.importTexture(from: image)
+    let first = try source.createPreset(name: "Selected", textureID: texture.id)
+    let second = try source.createPreset(name: "Skipped")
+    _ = try await source.service.export(presetIDs: [first.id, second.id], to: source.packageURL)
+    let preview = try await destination.service.prepareImport(from: source.packageURL)
+    let result = try await destination.service.commitImportInBackground(preview, selectedIDs: [first.id])
+    #expect(result == PresetPackageImportResult(presetCount: 1, newTextureCount: 1))
+    #expect(destination.presets.userPresets.map(\.name) == ["Selected"])
+    #expect(destination.textures.store.resolvedURL(for: texture.id) != nil)
+    await #expect(throws: PresetPackageError.previewExpired) {
+        try await destination.service.commitImportInBackground(preview, selectedIDs: [first.id])
+    }
+}
+
+@Test @MainActor func canceledBackgroundImportDoesNotPublishPresets() async throws {
+    let fixture = try PresetPackageFixture()
+    defer { fixture.cleanUp() }
+    let preset = try fixture.createPreset(name: "Original")
+    _ = try await fixture.service.export(presetIDs: [preset.id], to: fixture.packageURL)
+    let preview = try await fixture.service.prepareImport(from: fixture.packageURL)
+    defer { fixture.service.discardImport(preview) }
+    let task = Task { try await fixture.service.commitImportInBackground(preview, selectedIDs: [preset.id]) }
+    task.cancel()
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(fixture.presets.userPresets.count == 1)
+}

@@ -1,0 +1,45 @@
+name: Update Homebrew cask
+
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: homebrew-cask
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event_name == 'release' && !github.event.release.draft && !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: master
+          persist-credentials: false
+      - name: Generate cask from the latest stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/homebrew"
+          gh api repos/alexiosus/WandelBar/releases/latest > "$RUNNER_TEMP/homebrew/release.json"
+          tag=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tag_name"])' "$RUNNER_TEMP/homebrew/release.json")
+          gh release download "$tag" --repo alexiosus/WandelBar --pattern SHA256SUMS --dir "$RUNNER_TEMP/homebrew"
+          python3 Scripts/homebrew_cask.py "$RUNNER_TEMP/homebrew/release.json" "$RUNNER_TEMP/homebrew/SHA256SUMS" Casks/wandelbar.rb --readme README.md
+          ruby -c Casks/wandelbar.rb
+      - name: Commit cask
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          git add Casks/wandelbar.rb README.md
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Update Homebrew cask for the latest stable release'
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin HEAD:master

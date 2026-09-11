@@ -34,6 +34,13 @@ filing an issue, please include:
 - Describe *why* the change is needed, not just what it does.
 - One logical change per PR where possible.
 
+## Documentation and releases
+
+Update [CHANGELOG.md](CHANGELOG.md) with user-visible changes in plain language.
+Update the relevant user guide and its screenshots when changing the interface.
+Pull request builds do not receive release signing credentials. Never commit certificates,
+private keys, passwords or exported keychains.
+
 ## Project layout
 
 ```

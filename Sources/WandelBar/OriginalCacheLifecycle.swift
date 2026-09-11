@@ -130,14 +130,12 @@ enum WallpaperRefreshPolicy {
 }
 
 enum WallpaperRestorePolicy {
-    /// Turning WandelBar off restores the wallpaper it replaced. That is wrong once the
-    /// user has moved on to a wallpaper WandelBar never touched — restoring would drop a
-    /// still image on top of their video wallpaper. The stored original is dropped instead.
+    /// Never replace a newer wallpaper chosen outside WandelBar, whether still or video.
     static func shouldAbandonStoredOriginal(
         currentIsGenerated: Bool,
         unsupportedReason: String?
     ) -> Bool {
-        !currentIsGenerated && unsupportedReason != nil
+        !currentIsGenerated
     }
 }
 

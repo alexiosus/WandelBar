@@ -901,3 +901,44 @@ private extension NSImage {
         }
     }
 }
+
+@Test(arguments: [false, true]) @MainActor func thumbnailKeepsWideTextureAcrossFadeTail(currentWallpaper: Bool) throws {
+    let fixture = try RendererTextureFixture()
+    defer { fixture.cleanUp() }
+    let texture = try makeSolidCGImage(width: 720, height: 100, red: 255, green: 255, blue: 255)
+    try NSBitmapImageRep(cgImage: texture).representation(using: .png, properties: [:])!
+        .write(to: fixture.textureURL)
+    var settings = fixture.sharpBandSettings
+    settings.blurLengthPoints = 34
+    settings.fadeLengthPoints = 59
+    settings.textureID = "custom.fixture"
+    settings.textureStrength = 1
+    settings.textureBlendMode = .normal
+    settings.textureLayoutMode = .fitWidth
+    settings.textureVerticalPosition = 0.8
+    let renderer = WallpaperRenderer()
+    let size = CGSize(width: 360, height: 128)
+    func render(textureURL: URL?) throws -> CGImage {
+        if currentWallpaper {
+            return try renderer.renderPreview(
+                sourceURL: #require(PresetSampleBackground.renderURL),
+                display: DisplaySnapshot(id: "preview-test", localizedName: "Preview",
+                    frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+                    backingScaleFactor: 2, statusBarThickness: 24),
+                desktopOptions: DesktopRenderOptions(imageScaling: .scaleProportionallyUpOrDown,
+                    allowClipping: true, fillColor: .black),
+                settings: settings, textureURL: textureURL, size: size)
+        }
+        return try renderer.renderSamplePreview(settings: settings, textureURL: textureURL, size: size)
+    }
+    let base = try render(textureURL: nil)
+    let result = try render(textureURL: fixture.textureURL)
+    // A 720:100 texture fills the real screen's band. Shrinking its height to 50 px
+    // in a thumbnail incorrectly inserts a hard edge halfway through the 59 pt fade.
+    let background = fixture.pixel(base, x: 20, y: 65)
+    let faded = fixture.pixel(result, x: 20, y: 65)
+    #expect(Int(faded[0]) > Int(background[0]) + 25)
+    #expect(Int(faded[0]) < 245)
+    let below = fixture.pixel(result, x: 20, y: 100)
+    #expect(below == fixture.pixel(base, x: 20, y: 100))
+}

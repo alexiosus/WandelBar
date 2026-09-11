@@ -100,7 +100,8 @@ struct WallpaperRenderer {
             to: baseImage,
             display: previewDisplay,
             settings: settings,
-            textureURL: textureURL
+            textureURL: textureURL,
+            textureReferenceWidthPoints: display.frame.width
         )
         let cropRect = CGRect(
             x: 0,
@@ -155,7 +156,8 @@ struct WallpaperRenderer {
             to: baseImage,
             display: display,
             settings: settings,
-            textureURL: textureURL
+            textureURL: textureURL,
+            textureReferenceWidthPoints: 1440
         )
         let cropRect = CGRect(
             x: 0,
@@ -248,7 +250,8 @@ struct WallpaperRenderer {
         to cgImage: CGImage,
         display: DisplaySnapshot,
         settings: WallpaperEffectSettings,
-        textureURL: URL?
+        textureURL: URL?,
+        textureReferenceWidthPoints: CGFloat? = nil
     ) throws -> CGImage {
         let input = CIImage(cgImage: cgImage)
         let extent = input.extent
@@ -293,7 +296,8 @@ struct WallpaperRenderer {
             strength: settings.textureStrength,
             layoutMode: settings.textureLayoutMode,
             verticalPosition: settings.textureVerticalPosition,
-            isEnabled: settings.textureID != nil
+            isEnabled: settings.textureID != nil,
+            referenceWidth: textureReferenceWidthPoints.map { $0 * scale }
         )
 
         guard let mask = CIFilter(
@@ -394,26 +398,33 @@ struct WallpaperRenderer {
         bandBottom: CGFloat,
         bandHeight: CGFloat,
         layoutMode: TextureLayoutMode = .fitWidth,
-        verticalPosition: Double = 0
+        verticalPosition: Double = 0,
+        referenceWidth: CGFloat? = nil
     ) -> CGAffineTransform {
         guard textureExtent.width > 0, textureExtent.height > 0 else {
             return .identity
         }
 
-        let widthScale = renderExtent.width / textureExtent.width
+        // Previews enlarge the band's vertical geometry for legibility. Texture
+        // height must use that same point scale, even though the full desktop is
+        // compressed horizontally into a card. Otherwise a wide texture ends
+        // abruptly inside the fade instead of covering it as on the desktop.
+        let referenceWidth = max(1, referenceWidth ?? renderExtent.width)
+        let horizontalCompression = renderExtent.width / referenceWidth
+        let widthScale = referenceWidth / textureExtent.width
         let heightScale = bandHeight / textureExtent.height
         let scaleX: CGFloat
         let scaleY: CGFloat
         switch layoutMode {
         case .fitWidth:
-            scaleX = widthScale
+            scaleX = widthScale * horizontalCompression
             scaleY = widthScale
         case .fillBand:
             let scale = max(widthScale, heightScale)
-            scaleX = scale
+            scaleX = scale * horizontalCompression
             scaleY = scale
         case .stretchToBand:
-            scaleX = widthScale
+            scaleX = widthScale * horizontalCompression
             scaleY = heightScale
         }
 
@@ -443,7 +454,8 @@ struct WallpaperRenderer {
         strength: Double,
         layoutMode: TextureLayoutMode,
         verticalPosition: Double,
-        isEnabled: Bool
+        isEnabled: Bool,
+        referenceWidth: CGFloat? = nil
     ) -> CIImage {
         let normalizedStrength = min(max(strength, 0), 1)
         guard isEnabled,
@@ -459,7 +471,8 @@ struct WallpaperRenderer {
             bandBottom: bandBottom,
             bandHeight: bandHeight,
             layoutMode: layoutMode,
-            verticalPosition: verticalPosition
+            verticalPosition: verticalPosition,
+            referenceWidth: referenceWidth
         )
         let horizontallyExtendedTexture = sourceTexture
             .clampedToExtent()

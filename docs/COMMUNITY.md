@@ -1,115 +1,34 @@
-# Community catalogue maintenance
+# Community Gallery
 
-Packages stay in GitHub Discussions attachments. The signed index is served from
-`https://raw.githubusercontent.com/alexiosus/WandelBar/master/Community/catalog.json`.
-The default branch is **master**, not main. This client supports protocol capability
-2, including attachment ZIP unwrapping. Builds made before this change need an app
-update; adding subsequent presets does not require another app release.
+Open the globe beside the favorites star in the preset catalog to browse approved community
+packages. Enlarge a preview, choose a package and review the presets before importing them.
+No GitHub account is needed, and importing does not apply presets or overwrite existing ones.
 
-## Approve and remove presets
+![Community gallery](community-gallery.png)
 
-1. Open a post in **Preset Exchange** with exactly one ZIP/package attachment link.
-   The app's sharing output works: `Presets.zip` contains one root file named
-   `Presets.wandelbar-presets`.
-2. Check redistribution permission and review the package in WandelBar's import preview.
-3. Apply **community-approved**. Only the configured maintainer account (GitHub
-   numeric ID `48015759`, currently `alexiosus`) can authorize an addition.
-4. Check **Actions → Community catalogue**. After success, refresh Community Presets.
+## Getting listed
 
-Removing the label removes the entry on the next successful workflow run. Editing
-any part of the post invalidates its recorded approval. Review it again, remove the
-label and add it again. A remaining label does not approve replacement bytes.
-Deleted/transferred posts and posts outside Preset Exchange are also excluded.
-A pack can contain several presets and occupies one gallery card.
+Publish a package in the official
+[Preset Exchange](https://github.com/alexiosus/WandelBar/discussions/categories/preset-exchange)
+using the [sharing guide](SHARING.md). An authorized maintainer reviews it and permission to
+redistribute its textures, then adds **community-approved**. The package appears after automated
+checks succeed. Posting a Discussion or adding the label yourself does not grant approval.
 
-## Trust and automation
+Approval applies to the reviewed contents. Changes to the post require another review; withdrawn
+approval removes the listing on the next successful update. Refresh the gallery to see changes.
 
-The read-only validation job checks the event, numeric approver ID, live post body,
-attachment URL, ZIP structure, size limits, CRCs, manifest, texture digests and bounded
-normalized PNG pixel streams. It has **no signing secret**. The separate signing job
-receives only a small JSON record, rechecks the approval and current post, verifies
-the previous signed catalogue, then signs and updates JSON only. Archive contents
-are never executed. Discussion text is never interpolated into shell code.
-GitHub Actions dependencies are pinned to full commit hashes.
+## Verification and previews
 
-Downloads and the inner package are limited to 32 MiB, with at most 100 presets,
-100 textures and 200 MiB expanded package contents. The app independently checks
-signed size and SHA-256 before unpacking, then runs its normal import validation and
-confirmation. Catalogue inclusion does not bypass user confirmation.
-CDN redirects must match the official repository ID and approved attachment ID.
-Index requests cannot redirect to attachments. The app needs no GitHub token/login.
+WandelBar verifies the catalogue and checks that downloads match the approved contents.
+Damaged or unsafe packages are rejected. Packages contain settings and textures, not executable code.
+Approval means the package passed review and checks; it is not an endorsement by Apple.
 
-The signed envelope contains base64 `payload` and `signature`. The payload records
-schema 1, client capability 2, a monotonically increasing sequence, Unix timestamps,
-entries, and signed approval records (discussion number, body hash, attachment URL,
-file hash and approver). Signed per-discussion workflow-run watermarks retain revocation history, so rerunning an old approval cannot restore a removed preset. Concurrent updates use file-SHA compare-and-swap and retries.
+Previews use the sample wallpaper and show up to six presets per package. They can look different
+on your desktop. Verified previews are cached for offline viewing. An unavailable image does not
+prevent importing a valid package.
 
-Newly published catalogues last **7 days**. A daily workflow renews them when fewer
-than 3 days remain, retaining approved hashes and never silently approving new files.
-GitHub schedules may be delayed or disabled; use **Run workflow** to retry/renew.
-Offline clients may retain a removed preset until their signed catalogue expires.
-An inaccessible API fails the update rather than trusting uncertain approval state.
+An offline Mac may use a previously verified catalogue until it expires, up to seven days after
+publication. Removals therefore may not reach offline users immediately.
 
-## Signing key
-
-The **community-catalog** GitHub environment permits only the `master` branch.
-Its **CATALOG_SIGNING_KEY** secret contains the base64-encoded 32-byte Ed25519 key.
-Only the signing step receives it. It is decoded into a temporary owner-only file
-outside the checkout and removed on exit. It never belongs in logs, artifacts,
-workflow outputs, the app or the repository. Repository administrators and changes
-to trusted workflow code remain part of the trust boundary.
-
-The local original is `~/.config/wandelbar/catalog-signing.key` with mode 0600.
-Keep an encrypted backup. Do not regenerate it to add presets. It is independent
-of Developer ID, app signing and notarization.
-
-Check the key without printing it:
-
-```sh
-swift Scripts/catalog_sign.swift check-key \
-  --key "$HOME/.config/wandelbar/catalog-signing.key" \
-  --config Sources/WandelBar/Resources/Community/configuration.json
-```
-
-Never paste the key into a discussion, issue or chat. To replace the environment
-secret from the local original, pass base64 bytes directly to `gh secret set` through
-stdin, without shell tracing or a secret value in command-line arguments. Suspected
-compromise requires rotation and an app release pinning the new public key.
-Removing the environment secret stops automated signing.
-
-## Verification
-
-```sh
-python3 -m unittest discover -s Tests/CommunityAutomation -v
-swift test
-swift Scripts/catalog_sign.swift verify \
-  --config Sources/WandelBar/Resources/Community/configuration.json \
-  --input Community/catalog.json
-```
-
-`--allow-expired` on **verify** authenticates old state for renewal; signing still
-rejects expired payloads. `inspect --url` on the Python tool validates an attachment
-without approving, retaining, signing or publishing it. App releases should bundle
-a current verified copy of the signed index in `Resources/Community/catalog.json`.
-
-## Generated previews
-
-Approvals now render a PNG from the validated package using the same native renderer
-as Share to Discussions and the bundled sample photograph. Up to six presets are
-shown together; packages with more presets show the first six. Cards can be enlarged.
-The validation/rendering job has no signing secret. A separate upload job publishes
-only hash-verified PNGs under `Community/previews/<sha256>.png`; the signing job then
-authenticates URL, SHA-256, byte count and dimensions in the optional `preview` field.
-Packages still stay in Discussions. Existing clients can ignore optional artwork.
-
-Opening the gallery loads visible previews (at most two concurrent downloads). Each
-PNG is checked against signed metadata before decoding, and cached files are checked
-again on every use. The image cache is capped at 32 MiB; revoked images are removed
-from it. Preview failure never blocks package import. Images are at most 8 MiB,
-2160 by 4096 pixels and 9 million pixels total. Large contact sheets are downsampled
-to stay within the byte limit.
-
-Manual/daily runs generate missing artwork for up to ten already-approved packages
-per run, verifying their original signed hashes first. Renewal never approves changed
-package bytes. Orphaned remote PNGs can remain after revocation but are no longer
-referenced by the signed catalogue.
+Browsing downloads content from GitHub without sending your wallpaper or personal settings.
+See [privacy](../README.md#privacy).

@@ -21,13 +21,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menuBarPresenter = MenuBarController(controller: controller)
         }
         controller.start()
+        AppUpdater.shared.start()
+        DispatchQueue.main.async {
+            FirstLaunchMenuBarNotice.presentIfNeeded()
+        }
     }
 
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        menuBarPresenter?.showPopover()
+        if let dialog = sender.windows.first(where: { $0.identifier?.rawValue == "WandelBar.dialog" }) {
+            if dialog.isMiniaturized { dialog.deminiaturize(nil) }
+            dialog.makeKeyAndOrderFront(nil)
+            sender.activate(ignoringOtherApps: true)
+        } else {
+            menuBarPresenter?.showPopover()
+        }
         return false
     }
 

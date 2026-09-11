@@ -208,9 +208,22 @@ contain the wallpaper itself.
 
 ## Import and export
 
-Use the import and export buttons in the catalog header to move personal presets between Macs or
+Use the import and export actions in the catalog menu to move personal presets between Macs or
 share them with other WandelBar users.
 
 Export creates one `.wandelbar-presets` file containing the selected presets and any custom textures
 they use. Import shows a preview before making changes. Name conflicts are preserved safely with an
 `(Imported)` suffix, and imported presets are added to **My Presets** without being applied.
+
+
+## Find and share more presets
+
+Find more community-made presets in
+[Preset Exchange on GitHub Discussions](https://github.com/alexiosus/WandelBar/discussions/categories/preset-exchange).
+
+Search names and personal tags, or use the favorites star. The globe beside it opens
+**Community Gallery**, with approved packages and previews you can enlarge.
+See the [Community Gallery](COMMUNITY.md) section.
+
+Choose **Share to Discussions…** to prepare a post and attachments for your own collection.
+See the [sharing guide](SHARING.md) for the complete steps.

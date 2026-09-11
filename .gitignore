@@ -1,7 +1,6 @@
 # Swift / SwiftPM
 .build/
 .swiftpm/
-Package.resolved
 .worktrees/
 .superpowers/
 /DESIGN-IS-*/
@@ -22,3 +21,12 @@ xcuserdata/
 # Python automation caches
 __pycache__/
 *.pyc
+
+# Local signing material (never commit)
+*.p12
+*.p8
+*.keychain-db
+*.certSigningRequest
+
+# Local maintainer instructions and screenshot planning
+/docs/local/

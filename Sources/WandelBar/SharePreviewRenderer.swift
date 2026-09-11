@@ -109,4 +109,3 @@ enum SharePreviewRenderer {
         context.restoreGState()
     }
 }
-
